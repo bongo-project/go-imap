@@ -80,6 +80,27 @@ type Options struct {
 	// Dialer to use when establishing connections with the Dial* functions.
 	// If nil, a default dialer with a 30 second timeout is used.
 	Dialer *net.Dialer
+	// Maximum size in bytes of a literal that the client buffers in memory
+	// outside of body sections (for instance in an ENVELOPE or in a mailbox
+	// name). A larger literal makes the current command fail and the
+	// connection unusable. Body section literals are streamed and are not
+	// affected. If zero, DefaultMaxBufferedLiteralSize is used.
+	MaxBufferedLiteralSize int64
+}
+
+// DefaultMaxBufferedLiteralSize is the default value of
+// Options.MaxBufferedLiteralSize.
+const DefaultMaxBufferedLiteralSize = 64 * 1024
+
+func (options *Options) checkBufferedLiteral(size int64, nonSync bool) error {
+	max := options.MaxBufferedLiteralSize
+	if max <= 0 {
+		max = DefaultMaxBufferedLiteralSize
+	}
+	if size > max {
+		return fmt.Errorf("imapclient: server sent a literal of %v bytes, limit is %v", size, max)
+	}
+	return nil
 }
 
 func (options *Options) wrapReadWriter(rw io.ReadWriter) io.ReadWriter {
@@ -193,6 +214,7 @@ func New(conn net.Conn, options *Options) *Client {
 		state:      imap.ConnStateNone,
 		enabled:    make(imap.CapSet),
 	}
+	client.dec.CheckBufferedLiteralFunc = client.options.checkBufferedLiteral
 	go client.read()
 	return client
 }

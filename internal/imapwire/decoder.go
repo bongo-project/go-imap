@@ -583,6 +583,11 @@ func (dec *Decoder) Literal(ptr *string) bool {
 	if dec.CheckBufferedLiteralFunc != nil {
 		if err := dec.CheckBufferedLiteralFunc(lit.Size(), nonSync); err != nil {
 			lit.cancel()
+			if dec.side == ConnSideClient {
+				// A client cannot refuse a literal and carry on: the server
+				// is going to send the bytes anyway. Fail the decoder.
+				dec.returnErr(err)
+			}
 			return false
 		}
 	}

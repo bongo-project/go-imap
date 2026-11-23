@@ -768,7 +768,7 @@ func (c *Client) handleFetch(seqNum uint32) error {
 				return dec.Err()
 			}
 
-			bodyStruct, err := readBody(dec, &c.options)
+			bodyStruct, err := readBody(dec, &c.options, 0)
 			if err != nil {
 				return err
 			}
@@ -922,7 +922,16 @@ func parseMsgIDList(s string) ([]string, error) {
 	return h.MsgIDList("In-Reply-To")
 }
 
-func readBody(dec *imapwire.Decoder, options *Options) (imap.BodyStructure, error) {
+// maxBodyStructureDepth is the maximum nesting of multipart and
+// message/rfc822 parts accepted in a BODYSTRUCTURE. These recurse without
+// going through imapwire.Decoder.List, so the decoder's own depth limit
+// doesn't apply.
+const maxBodyStructureDepth = 100
+
+func readBody(dec *imapwire.Decoder, options *Options, depth int) (imap.BodyStructure, error) {
+	if depth >= maxBodyStructureDepth {
+		return nil, fmt.Errorf("imapclient: body structure nested too deeply")
+	}
 	if !dec.ExpectSpecial('(') {
 		return nil, dec.Err()
 	}
@@ -935,10 +944,10 @@ func readBody(dec *imapwire.Decoder, options *Options) (imap.BodyStructure, erro
 	)
 	if dec.String(&mediaType) {
 		token = "body-type-1part"
-		bs, err = readBodyType1part(dec, mediaType, options)
+		bs, err = readBodyType1part(dec, mediaType, options, depth)
 	} else {
 		token = "body-type-mpart"
-		bs, err = readBodyTypeMpart(dec, options)
+		bs, err = readBodyTypeMpart(dec, options, depth)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("in %v: %w", token, err)
@@ -957,7 +966,7 @@ func readBody(dec *imapwire.Decoder, options *Options) (imap.BodyStructure, erro
 	return bs, nil
 }
 
-func readBodyType1part(dec *imapwire.Decoder, typ string, options *Options) (*imap.BodyStructureSinglePart, error) {
+func readBodyType1part(dec *imapwire.Decoder, typ string, options *Options, depth int) (*imap.BodyStructureSinglePart, error) {
 	bs := imap.BodyStructureSinglePart{Type: typ}
 
 	if !dec.ExpectSP() || !dec.ExpectString(&bs.Subtype) || !dec.ExpectSP() {
@@ -1002,7 +1011,7 @@ func readBodyType1part(dec *imapwire.Decoder, typ string, options *Options) (*im
 			return nil, dec.Err()
 		}
 
-		msg.BodyStructure, err = readBody(dec, options)
+		msg.BodyStructure, err = readBody(dec, options, depth+1)
 		if err != nil {
 			return nil, err
 		}
@@ -1075,11 +1084,11 @@ func readBodyExt1part(dec *imapwire.Decoder, options *Options) (*imap.BodyStruct
 	return &ext, nil
 }
 
-func readBodyTypeMpart(dec *imapwire.Decoder, options *Options) (*imap.BodyStructureMultiPart, error) {
+func readBodyTypeMpart(dec *imapwire.Decoder, options *Options, depth int) (*imap.BodyStructureMultiPart, error) {
 	var bs imap.BodyStructureMultiPart
 
 	for {
-		child, err := readBody(dec, options)
+		child, err := readBody(dec, options, depth+1)
 		if err != nil {
 			return nil, err
 		}
